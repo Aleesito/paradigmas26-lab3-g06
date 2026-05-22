@@ -1,3 +1,6 @@
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.SparkContext._
+
 object Main {
   def main(args: Array[String]): Unit = {
     // Parse command-line arguments
@@ -6,16 +9,23 @@ object Main {
       case None => return // scopt prints error messages
     }
 
+    val spark = SparkSession.builder()
+    .appName("RedditNER")
+    .master("local[*]")
+    .getOrCreate()
+    val sc = spark.sparkContext
+
     // Load subscriptions
     val subscriptionOpts = FileIO.readSubscriptions(cmdArgs.subscriptionFile)
+    val rddPrueba = sc.parallelize(subscriptionOpts)
 
     // Filter out malformed subscriptions (None values)
-    val subscriptions = subscriptionOpts.flatten
+    val rddFiltered = rddPrueba.flatMap{ sub => sub }
 
     // Download feeds and parse posts, tracking success/failure
-    val downloadResults = subscriptions.map { subscription =>
+    val downloadResults = rddFiltered.map { subscription =>
       val feedOpt = FileIO.downloadFeed(subscription.url)
-      val posts = feedOpt.fold(List[Post]())(JsonParser.parsePosts(_, subscription.name))
+      val posts = feedOpt.fold(sc.emptyRDD[Post])(JsonParser.parsePosts(_, subscription.name))
       (feedOpt.isDefined, posts)
     }
 
