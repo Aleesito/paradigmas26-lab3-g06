@@ -12,15 +12,37 @@ object FileIO {
    */
   def readSubscriptions(filePath: String): List[Option[Subscription]] = {
     implicit val formats: Formats = DefaultFormats
-    val source = Source.fromFile(filePath)
-    val content = source.mkString
-    source.close()
 
-    val json = parse(content)
-    val subscriptions = json.extract[List[Map[String, String]]]
+    val contentOpt = try {
+      val source = Source.fromFile(filePath)
+      try Some(source.mkString)
+      finally source.close()
+    } catch {
+      case _: Exception =>
+        println(s"Error: Could not load $filePath - file not found")
+        None
+    }
 
-    subscriptions.map { sub =>
-      Some(Subscription(sub("name"), sub("url")))
+    // si pudimos leer el archivo
+    contentOpt match {
+      case None          => List()
+      case Some(content) =>
+        try {
+          val json          = parse(content)
+          val subscriptions = json.extract[List[Map[String, String]]]
+          subscriptions.map { sub =>
+            if (sub.contains("name") && sub.contains("url")) {
+              Some(Subscription(sub("name"), sub("url")))
+            } else {
+              println("Warning: Skipping malformed subscription (missing 'name' or 'url' field)")
+              None
+            }
+          }
+        } catch {
+          case _: Exception =>
+            println(s"Error: Could not load $filePath - invalid JSON format")
+            List.empty[Option[Subscription]]
+        }
     }
   }
 
@@ -30,10 +52,12 @@ object FileIO {
    * @return Option containing JSON as String, None on network error or timeout
    */
   def downloadFeed(url: String): Option[String] = {
-    val source = Source.fromURL(url)
-    val content = source.mkString
-    source.close()
-    Some(content)
+    try {
+      val source  = Source.fromURL(url)
+      try Some(source.mkString) finally source.close
+    } catch {
+      case _: Exception => None
+    }
   }
 
   /**
@@ -41,14 +65,21 @@ object FileIO {
    * @param filePath path to dictionary file
    * @return Option containing list of entities, None if file missing
    */
-  def readDictionaryFile(filePath: String): Option[List[String]] = {
-    val source = Source.fromFile(filePath)
-    val lines = source.getLines()
-      .map(_.trim)
-      .filter(_.nonEmpty)
-      .filterNot(_.startsWith("#"))
-      .toList
-    source.close()
-    Some(lines)
-  }
+  def readDictionaryFile(filePath: String): Option[List[String]] =
+    try {
+      val source = Source.fromFile(filePath)
+      try {
+        val lines = source
+          .getLines()
+          .map(_.trim)
+          .filter(_.nonEmpty)
+          .filterNot(_.startsWith("#"))
+          .toList
+        Some(lines)
+      } finally source.close()
+    } catch {
+      case _: Exception =>
+        println(s"Warning: Could not load $filePath")
+        None
+    }
 }

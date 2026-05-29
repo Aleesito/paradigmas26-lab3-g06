@@ -3,16 +3,14 @@ object Analyzer {
   /**
    * Filter out empty or irrelevant posts.
    * Discards posts where title is empty/null, selftext is empty/null/whitespace.
-   * @param posts list of posts to filter
+   * @param post list of posts to filter
    * @return filtered list of valid posts
    */
-  def filterEmptyPosts(posts: List[Post]): List[Post] = {
-    posts.filter { post =>
-      post.title.nonEmpty &&
+  /* Preguntar al profe, tuve que cambiarle la firma para pasarselo a un filter de RDD en Main */
+  def isEmptyPost(post: Post): Boolean =
+    post.title.nonEmpty &&
       post.selftext.nonEmpty &&
       post.selftext.trim.nonEmpty
-    }
-  }
 
   /**
    * Detect entities from dictionary that appear in the given text.
@@ -34,13 +32,12 @@ object Analyzer {
    * @param entities list of detected entities
    * @return map from (entityType, entityName) to count
    */
-  def countEntities(entities: List[NamedEntity]): Map[(String, String), Int] = {
+  def countEntities(entities: List[NamedEntity]): Map[(String, String), Int] =
     entities
       .groupBy(entity => (entity.entityType, entity.text))
       .view
       .mapValues(_.size)
       .toMap
-  }
 
   /**
    * Count total entities and entities by type.

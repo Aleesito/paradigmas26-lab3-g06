@@ -6,7 +6,7 @@ object Dictionary {
    * @param entityType type of entity to create ("Person", "University", etc.)
    * @return Option containing list of entities, None if file missing
    */
-  def loadFromFile(filePath: String, entityType: String): Option[List[NamedEntity]] = {
+  def loadFromFile(filePath: String, entityType: String): Option[List[NamedEntity]] =
     FileIO.readDictionaryFile(filePath).map { lines =>
       lines.map { name =>
         entityType match {
@@ -20,7 +20,6 @@ object Dictionary {
         }
       }
     }
-  }
 
   /**
    * Load all dictionary files and combine into a single list.
@@ -31,6 +30,10 @@ object Dictionary {
   def loadAll(entitiesDir: String): List[NamedEntity] = {
     // Check if entities directory exists
     val dataDir = new java.io.File(entitiesDir)
+    if (!dataDir.exists() || !dataDir.isDirectory()) {
+      println(s"Error: entities directory '$entitiesDir' not found")
+      return List.empty[NamedEntity] // me imagino que va así, revisar. la idea sería salir de la función si no existe el directorio
+    }
 
     val peopleOpt = loadFromFile(s"$entitiesDir/people.txt", "Person")
 

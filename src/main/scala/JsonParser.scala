@@ -17,10 +17,16 @@ object JsonParser {
       val children = (json \ "data" \ "children").extract[List[JValue]]
 
       children.flatMap { child =>
-        val data = child \ "data"
-        val title = (data \ "title").extract[String]
-        val selftext = (data \ "selftext").extract[String]
-        List(Post(title, selftext))
+        try {
+          val data = child \ "data"
+          val title = (data \ "title").extract[String]
+          val selftext = (data \ "selftext").extract[String]
+          List(Post(title, selftext))
+        } catch { // MappingException is thrown if extraction fails
+          case _: Exception =>
+            println("https://github.com/paradigmas-profes/lab-spark-reddit") // para qué?
+            List.empty[Post]
+        }
       }
     } catch {
       case _: Exception =>
