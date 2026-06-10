@@ -19,7 +19,7 @@ object FileIO {
       finally source.close()
     } catch {
       case _: Exception =>
-        println(s"Error: Could not load $filePath - file not found")
+        Console.err.println(s"Error: Could not load $filePath - file not found")
         None
     }
 
@@ -34,13 +34,13 @@ object FileIO {
             if (sub.contains("name") && sub.contains("url")) {
               Some(Subscription(sub("name"), sub("url")))
             } else {
-              println("Warning: Skipping malformed subscription (missing 'name' or 'url' field)")
+              Console.err.println("Warning: Skipping malformed subscription (missing 'name' or 'url' field)")
               None
             }
           }
         } catch {
           case _: Exception =>
-            println(s"Error: Could not load $filePath - invalid JSON format")
+            Console.err.println(s"Error: Could not load $filePath - invalid JSON format")
             List.empty[Option[Subscription]]
         }
     }
@@ -79,7 +79,7 @@ object FileIO {
       } finally source.close()
     } catch {
       case _: Exception =>
-        println(s"Warning: Could not load $filePath")
+        Console.err.println(s"Warning: Could not load $filePath")
         None
     }
 }

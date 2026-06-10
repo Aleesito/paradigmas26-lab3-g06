@@ -22,7 +22,7 @@ object Main {
     // Filter out malformed subscriptions (None values)
     val subscriptions = subscriptionOpts.flatten
     if (subscriptions.isEmpty) {
-      println("Error: No valid subscriptions found")
+      Console.err.println("Error: No valid subscriptions found")
       return
     }
 
@@ -42,7 +42,7 @@ object Main {
       // feedOpt.fold(valor si es None)(aplico función si es Some)
       val posts   = feedOpt match {
         case None          =>
-          println(s"Warning: Failed to download from '${subscription.name}' (${subscription.url})")
+          Console.err.println(s"Warning: Failed to download from '${subscription.name}' (${subscription.url})")
           List.empty[Post]
         case Some(content) =>
           JsonParser.parsePosts(content, subscription.name)
@@ -56,7 +56,7 @@ object Main {
       feedOpt match {
         case None =>
           feedsFailedAcc.add(1)
-          println(s"Warning: Failed to download from '${subscription.name}' (${subscription.url})")
+          Console.err.println(s"Warning: Failed to download from '${subscription.name}' (${subscription.url})")
           List.empty[Post]
         case Some(content) =>
           feedsSuccessAcc.add(1)
@@ -107,7 +107,7 @@ object Main {
 
     // Check if we have any posts to process
     if (postCount == 0) {
-      println("Error: No valid posts downloaded after filtering")
+      Console.err.println("Error: No valid posts downloaded after filtering")
       return
     }
 

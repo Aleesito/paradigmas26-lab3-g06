@@ -32,7 +32,7 @@ object JsonParser {
 
     } catch {
       case _: Exception =>
-        println(s"Warning: Failed to parse JSON from '$subscriptionName'")
+        Console.err.println(s"Warning: Failed to parse JSON from '$subscriptionName'")
         (List.empty[Post], 0)
     }
   }

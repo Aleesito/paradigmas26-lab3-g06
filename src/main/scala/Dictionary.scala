@@ -31,7 +31,7 @@ object Dictionary {
     // Check if entities directory exists
     val dataDir = new java.io.File(entitiesDir)
     if (!dataDir.exists() || !dataDir.isDirectory()) {
-      println(s"Error: entities directory '$entitiesDir' not found")
+      Console.err.println(s"Error: entities directory '$entitiesDir' not found")
       return List.empty[NamedEntity] // me imagino que va así, revisar. la idea sería salir de la función si no existe el directorio
     }
 
