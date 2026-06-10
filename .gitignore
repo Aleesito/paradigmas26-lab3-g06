@@ -42,3 +42,6 @@ bin/
 
 # general
 *.class
+
+# custom script
+sbt.run

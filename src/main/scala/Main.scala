@@ -28,6 +28,12 @@ object Main {
 
     val rddSubs = sc.parallelize(subscriptions)
 
+    // Necesitamos crear los acumuladores antes de ejecutar cualquier operación del RDD.
+    val feedsSuccessAcc    = sc.longAccumulator("Feeds Downloaded Successfully")
+    val feedsFailedAcc     = sc.longAccumulator("Feeds Failed")
+    val postsDownloadedAcc = sc.longAccumulator("Posts Downloaded")
+    val postsFilteredAcc   = sc.longAccumulator("Posts Filtered (empty)")
+
     // Download feeds and parse posts, tracking success/failure
     val downloadResults = rddSubs.map { subscription =>
       val feedOpt = FileIO.downloadFeed(subscription.url)
@@ -43,30 +49,53 @@ object Main {
       (feedOpt.isDefined, posts)
     }
 
-    // Count feed successes/failures
-    val feedsSuccess = downloadResults.filter(_._1).count
-    val feedsFailed  = downloadResults.count - feedsSuccess
+    // Download feeds, emit posts, update feed/post accumulators
+    val allPosts: RDD[Post] = rddSubs.flatMap { subscription =>
+      val feedOpt = FileIO.downloadFeed(subscription.url)
+      feedOpt match {
+        case None =>
+          feedsFailedAcc.add(1)        // worker increments, driver reads later
+          println(s"Warning: Failed to download from '${subscription.name}' (${subscription.url})")
+          List.empty[Post]
+        case Some(content) =>
+          feedsSuccessAcc.add(1)
+          val posts = JsonParser.parsePosts(content, subscription.name)
+          postsDownloadedAcc.add(posts.length)
+          posts
+      }
+    }
 
-    // Flatten all posts and count JSON parse failures
-    val allPosts     = downloadResults.flatMap(_._2)
-    val postsSuccess = allPosts.count
-    val postsFailed  = downloadResults.filter(_._2.isEmpty).count
+    // Filter empty posts — also updates the filtered accumulator as a side effect
+    val filteredPosts: RDD[Post] = allPosts.filter { post =>
+      if (Analyzer.isEmptyPost(post)) {
+        true
+      } else {
+        postsFilteredAcc.add(1)   // worker increments
+        false
+      }
+    }
 
-    // Filter empty posts
-    val filteredPosts = allPosts.filter(Analyzer.isEmptyPost(_))
-    val postsFiltered = allPosts.count - filteredPosts.count
+    // Action: materializes the pipeline and flushes accumulator values to driver
+    val t0 = System.currentTimeMillis()
+    val postCount = filteredPosts.count()   // ← the action
+    val t1 = System.currentTimeMillis()
+    println(s"Pipeline stage 1 (download + filter): ${(t1 - t0) / 1000.0}s")
 
-    // Calculate average characters in filtered posts
-    val totalChars = filteredPosts.map(post => post.title.length + post.selftext.length).sum
-    val avgChars   = if (!filteredPosts.isEmpty) (totalChars / filteredPosts.count).toInt else 0
+    // Compute average post length — safe to read accumulators here
+    val avgChars: Int = if (postCount > 0) {
+      val totalChars = filteredPosts
+        .map(p => p.title.length + p.selftext.length)
+        .sum()
+      (totalChars / postCount).toInt
+    } else 0
 
     // Prepare statistics
     val stats = Map(
-      "feedsSuccess"  -> feedsSuccess.toInt,
-      "feedsFailed"   -> feedsFailed.toInt,
-      "postsSuccess"  -> postsSuccess.toInt,
-      "postsFailed"   -> postsFailed.toInt,
-      "postsFiltered" -> postsFiltered.toInt,
+      "feedsSuccess"  -> feedsSuccessAcc.value.toInt,
+      "feedsFailed"   -> feedsFailedAcc.value.toInt,
+      "postsSuccess"  -> postsDownloadedAcc.value.toInt,
+      "postsFailed"   -> 0,
+      "postsFiltered" -> postsFilteredAcc.value.toInt,
       "avgChars"      -> avgChars
     )
 
@@ -75,7 +104,7 @@ object Main {
     println()
 
     // Check if we have any posts to process
-    if (filteredPosts.isEmpty) {
+    if (postCount == 0) {
       println("Error: No valid posts downloaded after filtering")
       return
     }
@@ -89,28 +118,24 @@ object Main {
       Analyzer.detectEntities(combinedText, dictionary)
     }
 
-    val entitiesPairs = allEntities.map(entity => ((entity.entityType, entity.text), 1))
+    val entitiesCounts = allEntities
+      .map(entity => ((entity.entityType, entity.text), 1))
+      .reduceByKey(_ + _)
 
-    // Count entities
-    val entitiesCounts = entitiesPairs.reduceByKey(_ + _)
-
+    val t2 = System.currentTimeMillis()
     val sortedRDD = entitiesCounts
-      .sortBy { case ((entityType, entityName), count) =>
-        (-count, entityType, entityName)
-      }
+      .sortBy { case ((entityType, entityName), count) => (-count, entityType, entityName) }
       .take(cmdArgs.topK)
       .toMap
+    val t3 = System.currentTimeMillis()
+    println(s"Pipeline stage 2 (NER + reduce): ${(t3 - t2) / 1000.0}s")
 
-    // Entities stats
-    val typeMap       = entitiesCounts
-      .map { case ((entityType, _), count) =>
-        (entityType, count)       // map para quedarme solo con las entidades y los conteos parciales
-      }
-      .reduceByKey(_ + _)     // ahora reduzco el RDD sumando los valores de los diccionarios que tengan la misma entidad
-      .collect()          // acá uso collect(), pero una vez reducido el RDD (2 veces de hecho)
+    val typeMap = entitiesCounts
+      .map { case ((entityType, _), count) => (entityType, count) }
+      .reduceByKey(_ + _)
+      .collect()
       .toMap
-    val totalEntities = typeMap.values.sum
-    val typeStats     = typeMap + ("total" -> totalEntities)  // agrego la variable que exige la función
+    val typeStats = typeMap + ("total" -> typeMap.values.sum)
 
     println(Formatters.formatTypeStats(typeStats))
     println(Formatters.formatEntityStats(sortedRDD, cmdArgs.topK))
