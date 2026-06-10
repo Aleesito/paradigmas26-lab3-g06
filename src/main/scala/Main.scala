@@ -1,7 +1,6 @@
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.SparkContext._
 import org.apache.spark.rdd.RDD
-
 object Main {
   def main(args: Array[String]): Unit = {
     // Parse command-line arguments
@@ -102,7 +101,20 @@ object Main {
       .take(cmdArgs.topK)
       .toMap
 
+    // Entities stats
+    val typeMap       = entitiesCounts
+      .map { case ((entityType, _), count) =>
+        (entityType, count)       // map para quedarme solo con las entidades y los conteos parciales
+      }
+      .reduceByKey(_ + _)     // ahora reduzco el RDD sumando los valores de los diccionarios que tengan la misma entidad
+      .collect()          // acá uso collect(), pero una vez reducido el RDD (2 veces de hecho)
+      .toMap
+    val totalEntities = typeMap.values.sum
+    val typeStats     = typeMap + ("total" -> totalEntities)  // agrego la variable que exige la función
+
+    println(Formatters.formatTypeStats(typeStats))
     println(Formatters.formatEntityStats(sortedRDD, cmdArgs.topK))
 
+    spark.stop()
   }
 }
