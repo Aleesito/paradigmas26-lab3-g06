@@ -32,6 +32,7 @@ object Main {
     val feedsSuccessAcc    = sc.longAccumulator("Feeds Downloaded Successfully")
     val feedsFailedAcc     = sc.longAccumulator("Feeds Failed")
     val postsDownloadedAcc = sc.longAccumulator("Posts Downloaded")
+    val postsFailedAcc     = sc.longAccumulator("Posts Failed (Parse Error)")
     val postsFilteredAcc   = sc.longAccumulator("Posts Filtered (empty)")
 
     // Download feeds and parse posts, tracking success/failure
@@ -54,13 +55,14 @@ object Main {
       val feedOpt = FileIO.downloadFeed(subscription.url)
       feedOpt match {
         case None =>
-          feedsFailedAcc.add(1)        // worker increments, driver reads later
+          feedsFailedAcc.add(1)
           println(s"Warning: Failed to download from '${subscription.name}' (${subscription.url})")
           List.empty[Post]
         case Some(content) =>
           feedsSuccessAcc.add(1)
-          val posts = JsonParser.parsePosts(content, subscription.name)
+          val (posts, failed) = JsonParser.parsePosts(content, subscription.name)
           postsDownloadedAcc.add(posts.length)
+          postsFailedAcc.add(failed)          // ← now tracked, not just warned
           posts
       }
     }
@@ -94,7 +96,7 @@ object Main {
       "feedsSuccess"  -> feedsSuccessAcc.value.toInt,
       "feedsFailed"   -> feedsFailedAcc.value.toInt,
       "postsSuccess"  -> postsDownloadedAcc.value.toInt,
-      "postsFailed"   -> 0,
+      "postsFailed"   -> postsFailedAcc.value.toInt,
       "postsFiltered" -> postsFilteredAcc.value.toInt,
       "avgChars"      -> avgChars
     )

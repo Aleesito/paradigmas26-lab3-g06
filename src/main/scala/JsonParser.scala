@@ -7,31 +7,33 @@ object JsonParser {
    * Parse Reddit JSON feed and extract posts.
    * @param jsonContent JSON string from Reddit API
    * @param subscriptionName name of subscription (for logging)
-   * @return list of posts, empty list if parsing fails
+   * @return (list of posts/empty list if parsing fails, failed parse count)
    */
-  def parsePosts(jsonContent: String, subscriptionName: String): List[Post] = {
+  def parsePosts(jsonContent: String, subscriptionName: String): (List[Post], Int) = {
     try {
       implicit val formats: Formats = DefaultFormats
-
-      val json = parse(jsonContent)
+      val json     = parse(jsonContent)
       val children = (json \ "data" \ "children").extract[List[JValue]]
 
-      children.flatMap { child =>
+      val results = children.map { child =>
         try {
-          val data = child \ "data"
-          val title = (data \ "title").extract[String]
+          val data     = child \ "data"
+          val title    = (data \ "title").extract[String]
           val selftext = (data \ "selftext").extract[String]
-          List(Post(title, selftext))
-        } catch { // MappingException is thrown if extraction fails
-          case _: Exception =>
-            println("https://github.com/paradigmas-profes/lab-spark-reddit") // para qué?
-            List.empty[Post]
+          Some(Post(title, selftext))
+        } catch {
+          case _: Exception => None
         }
       }
+
+      val posts  = results.flatten
+      val failed = results.count(_.isEmpty)
+      (posts, failed)
+
     } catch {
       case _: Exception =>
         println(s"Warning: Failed to parse JSON from '$subscriptionName'")
-        List()
+        (List.empty[Post], 0)
     }
   }
 }
