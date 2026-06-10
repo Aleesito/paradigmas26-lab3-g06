@@ -80,7 +80,7 @@ object Main {
       println("Error: No valid posts downloaded after filtering")
       return
     }
-    /*
+
     // Load dictionaries
     val dictionary = Dictionary.loadAll(cmdArgs.entitiesDir)
 
@@ -90,14 +90,19 @@ object Main {
       Analyzer.detectEntities(combinedText, dictionary)
     }
 
-    // Count entities
-    val entityCounts = Analyzer.countEntities(allEntities)
-    val typeStats    = Analyzer.countByType(allEntities)
+    val entitiesPairs = allEntities.map(entity => ((entity.entityType, entity.text), 1))
 
-    println(Formatters.formatTypeStats(typeStats))
-    println()
-    println(Formatters.formatEntityStats(entityCounts, cmdArgs.topK))
-     */
+    // Count entities
+    val entitiesCounts = entitiesPairs.reduceByKey(_ + _)
+
+    val sortedRDD = entitiesCounts
+      .sortBy { case ((entityType, entityName), count) =>
+        (-count, entityType, entityName)
+      }
+      .take(cmdArgs.topK)
+      .toMap
+
+    println(Formatters.formatEntityStats(sortedRDD, cmdArgs.topK))
 
   }
 }
