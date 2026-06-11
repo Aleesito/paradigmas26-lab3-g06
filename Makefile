@@ -12,8 +12,11 @@ all: run
 
 # Compila y ejecuta
 run:
-	@echo "Iniciando ejecución con Apache Spark..."
 	$(ENV_SETUP) sbt run
+
+# Compila y ejecuta (subscripciones locales)
+run-local:
+	$(ENV_SETUP) sbt "run --subscription-file data/local_subscriptions.json"
 
 # Solo compila el código
 compile:
