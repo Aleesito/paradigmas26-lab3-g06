@@ -9,7 +9,7 @@ object JsonParser {
    * @param subscriptionName name of subscription (for logging)
    * @return (list of posts/empty list if parsing fails, failed parse count)
    */
-  def parsePosts(jsonContent: String, subscriptionName: String): (List[Post], Int) = {
+  def parsePosts(jsonContent: String, subscriptionName: String): List[Post] = {
     try {
       implicit val formats: Formats = DefaultFormats
       val json     = parse(jsonContent)
@@ -27,13 +27,12 @@ object JsonParser {
       }
 
       val posts  = results.flatten
-      val failed = results.count(_.isEmpty)
-      (posts, failed)
+      posts
 
     } catch {
       case _: Exception =>
         Console.err.println(s"Warning: Failed to parse JSON from '$subscriptionName'")
-        (List.empty[Post], 0)
+        List.empty[Post]
     }
   }
 }

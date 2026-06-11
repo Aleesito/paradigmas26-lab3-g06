@@ -60,9 +60,13 @@ object Main {
           List.empty[Post]
         case Some(content) =>
           feedsSuccessAcc.add(1)
-          val (posts, failed) = JsonParser.parsePosts(content, subscription.name)
+          val posts = JsonParser.parsePosts(content, subscription.name)
           postsDownloadedAcc.add(posts.length)
-          postsFailedAcc.add(failed)          // ← now tracked, not just warned
+
+          if (posts.isEmpty) {
+            postsFailedAcc.add(1)
+          }
+
           posts
       }
     }
