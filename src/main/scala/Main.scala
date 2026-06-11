@@ -35,21 +35,6 @@ object Main {
     val postsFailedAcc     = sc.longAccumulator("Posts Failed (Parse Error)")
     val postsFilteredAcc   = sc.longAccumulator("Posts Filtered (empty)")
 
-    // Download feeds and parse posts, tracking success/failure
-    val downloadResults = rddSubs.map { subscription =>
-      val feedOpt = FileIO.downloadFeed(subscription.url)
-      // en el kickstart se usaba el fold de forma muy interesante
-      // feedOpt.fold(valor si es None)(aplico función si es Some)
-      val posts   = feedOpt match {
-        case None          =>
-          Console.err.println(s"Warning: Failed to download from '${subscription.name}' (${subscription.url})")
-          List.empty[Post]
-        case Some(content) =>
-          JsonParser.parsePosts(content, subscription.name)
-      }
-      (feedOpt.isDefined, posts)
-    }
-
     // Download feeds, emit posts, update feed/post accumulators
     val allPosts: RDD[Post] = rddSubs.flatMap { subscription =>
       val feedOpt = FileIO.downloadFeed(subscription.url)
@@ -80,6 +65,7 @@ object Main {
         false
       }
     }
+    filteredPosts.cache()
 
     // Action: materializes the pipeline and flushes accumulator values to driver
     val t0 = System.currentTimeMillis()
@@ -112,6 +98,7 @@ object Main {
     // Check if we have any posts to process
     if (postCount == 0) {
       Console.err.println("Error: No valid posts downloaded after filtering")
+      filteredPosts.unpersist()
       return
     }
 
@@ -127,6 +114,8 @@ object Main {
     val entitiesCounts = allEntities
       .map(entity => ((entity.entityType, entity.text), 1))
       .reduceByKey(_ + _)
+
+    entitiesCounts.cache()
 
     val t2 = System.currentTimeMillis()
     val sortedRDD = entitiesCounts
@@ -145,6 +134,9 @@ object Main {
 
     println(Formatters.formatTypeStats(typeStats))
     println(Formatters.formatEntityStats(sortedRDD, cmdArgs.topK))
+
+    filteredPosts.unpersist()
+    entitiesCounts.unpersist()
 
     spark.stop()
   }
