@@ -295,12 +295,9 @@ El valor de un Accumulator solo es confiable después de que una **acción termi
 
 | Etapa | Secuencial (esqueleto) | Con Spark (local[*]) | Diferencia |
 |-------|----------------------|----------------------|------------|
-| Descarga + filtrado (`count`) | ~6 s | 6 s (Job 0) | Sin mejora apreciable |
-| Cómputo de largo promedio (`sum`) | < 0,1 s | 0,2 s | Spark es más lento |
-| NER + reducción (`sortBy`) | ~0,3 s | 0,6 s (Job 2) | Spark es más lento |
-| Ranking (`take` × 2) | < 0,1 s | 0,1 s + 0,1 s | Equivalente |
-| Conteo por tipo (`collect`) | < 0,1 s | 0,2 s | Spark es más lento |
-| **Total** | ~6,5 s | ~7,2 s | Spark ~10% más lento |
+| Descarga + filtrado (`count`) | 20.25s | 5.51 s (Job 0) | 72,8% |
+| NER + reducción (`sortBy`) | 0.05 s | 0.55 s (Job 2) | Spark es más lento |
+
 
 Para el volumen de datos del laboratorio (pocos feeds, cientos de posts), **la versión con Spark no es más rápida que la secuencial**. La razón es que el overhead de Spark (inicialización del SparkContext, serialización de funciones y datos, scheduling de tareas, shuffle) supera el beneficio de la paralelización cuando el trabajo por tarea es pequeño. El cuello de botella real es la descarga HTTP, que en modo `local[*]` sí se paraleliza en 4 threads, pero con pocos feeds esa ganancia no compensa el overhead fijo. La ventaja de Spark se materializaría con cientos o miles de feeds, donde el trabajo distribuible domina sobre el overhead.
 
