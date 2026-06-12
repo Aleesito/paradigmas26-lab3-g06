@@ -14,6 +14,9 @@
 
 Una decisión de diseño sutil pero importante fue al modificar una función de `Analyzer.scala` para filtrar los posts correctamente, la función en el baseline tomaba como argumento un `List[Post]` y devolvía una lista filtrada `List[Post]`, esta función resultaba inútil para nuestra implementación con Spark al tener un `RDD[Post]`. Debido a esta limitiación decidimos modificar por completo la función dejando como signatura: `def isEmptyPost(post: Post): Boolean`, esto nos permitió filtrar de manera sencilla nustro `RDD[Post]` y mantener modularizada la lógica.
 
+
+Otra decisión: Se optó por modificar el esqueleto directamente en lugar de reescribirlo desde cero. Esto permitió conservar la estructura del pipeline original (descarga → filtrado → NER → conteo → presentación) y reemplazar progresivamente las operaciones sobre listas (`List[Post], List[NamedEntity]`) por operaciones sobre RDDs (`RDD[Post], RDD[NamedEntity]`). La acción terminal de cada etapa del pipeline (`count()`, `take()`, `collect()`) hace el rol del `collect()` explícito que menciona el enunciado para quienes elijan este enfoque.
+
 ---
 
 ## Ejercicio 1 — Identificar las regiones paralelizables
