@@ -156,44 +156,154 @@ Esta decisión de diseño evita que cada worker tenga que realizar operaciones l
 
 ---
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 ## Ejercicio 4 — Monitoreo del éxito de las tareas
 
-### Limitaciones de los Accumulators para tomar decisiones lógicas
+### a) y b) Accumulators y estadísticas
 
-> ¿Por qué los Accumulators solo deben usarse para métricas y no para tomar decisiones lógicas dentro de las etapas distribuidas del pipeline? ¿En qué situación puede dar un valor incorrecto?
+El pipeline incorpora cinco `LongAccumulator` definidos en el driver antes de ejecutar cualquier transformación:
 
-<!-- Completar: Spark puede re-ejecutar tareas ante fallos (o especulativamente), lo que haría que un Accumulator se incremente más de una vez para el mismo dato. Por eso su valor puede ser impreciso durante la ejecución. Usarlos para controlar flujo lógico (ej: "si hay más de N errores, abortar") sería incorrecto -->
+| Accumulator | Qué mide |
+|---|---|
+| `feedsSuccessAcc` | Feeds descargados con éxito |
+| `feedsFailedAcc` | Feeds que fallaron (timeout, error HTTP o contenido inválido) |
+| `postsDownloadedAcc` | Posts descargados en total |
+| `postsFailedAcc` | Feeds cuyo parseo no produjo ningún post |
+| `postsFilteredAcc` | Posts descartados por tener título o selftext vacío |
 
-### ¿Cuándo está disponible el valor de un Accumulator para el driver?
+Estos cinco valores se imprimen por pantalla a través de `Formatters.formatProcessingStats` luego de la primera acción terminal del pipeline (`filteredPosts.count()`).
 
-> ¿En qué momento del pipeline está disponible el valor de un Accumulator para ser leído por el driver?
+### c) Medición de tiempos
 
-<!-- Completar: el valor de un Accumulator solo es confiable después de que una acción terminal (collect, count, saveAsTextFile, etc.) haya completado. Durante la evaluación lazy de transformaciones, los valores aún no están disponibles -->
+Se midieron dos puntos del pipeline con `System.currentTimeMillis()`:
 
-### Comparativa de tiempos: versión secuencial vs. Spark
+- **Stage 1** — desde antes de `filteredPosts.count()` hasta después: cubre la descarga de feeds, el parseo, el filtrado y el cómputo del largo promedio.
+- **Stage 2** — desde antes de `entitiesCounts.sortBy(...).take(topK)` hasta después: cubre la detección de entidades, el `map`, el `reduceByKey` y el ordenamiento final.
 
-> Comparar el tiempo de ejecución de cada etapa entre la versión sin paralelización (esqueleto) y la versión con Spark.
+---
 
-| Etapa | Tiempo secuencial (ms) | Tiempo con Spark (ms) | Observaciones |
-|-------|------------------------|----------------------|---------------|
-| Descarga de feeds | <!-- --> | <!-- --> | <!-- --> |
-| Extracción de entidades | <!-- --> | <!-- --> | <!-- --> |
-| Reducción / conteo | <!-- --> | <!-- --> | <!-- --> |
-| **Total** | <!-- --> | <!-- --> | <!-- --> |
+### Análisis de la Spark UI
 
-**Conclusiones:**
+#### Jobs
 
-<!-- Completar: para el volumen de datos del laboratorio, ¿se aprecia diferencia? Discutir el overhead de inicialización de Spark (SparkContext, serialización, scheduling) y si justifica la paralelización para inputs pequeños vs. grandes -->
+Durante la ejecución se dispararon jobs a medida que el driver ejecutaba acciones terminales. La siguiente captura muestra el Job 0 en ejecución, disparado por el `count` en `Main.scala:72`, con 6 segundos de duración y un stage aún activo:
 
-### Captura de Spark UI
+![Spark UI - Job 0 activo](images/job0.jpeg)
 
-> Incluir captura de pantalla de la Spark UI mostrando el grafo de ejecución y el progreso de cada stage.
+Una vez completada la ejecución completa, la UI registró **6 jobs completados**:
 
-<!-- Insertar imagen: ![Spark UI](./spark-ui-screenshot.png) -->
+| Job | Acción terminal | Duración | Stages ok/total |
+|-----|----------------|----------|-----------------|
+| 0 | `count` at Main.scala:72 | 6 s | 1/1 |
+| 1 | `sum` at Main.scala:79 | 0,2 s | 1/1 |
+| 2 | `sortBy` at Main.scala:122 | 0,6 s | 2/2 |
+| 3 | `take` at Main.scala:123 | 0,1 s | 1/1 (2 skipped) |
+| 4 | `take` at Main.scala:123 | 0,1 s | 1/1 (2 skipped) |
+| 5 | `collect` at Main.scala:130 | 0,2 s | 2/2 (1 skipped) |
 
-**Análisis de la Spark UI:**
+![Spark UI - 6 jobs completados](images/6-jobs-complete.jpeg)
 
-<!-- Completar: describir qué stages se observan, cuántas tareas por stage, tiempos, y si hay algún stage que tome significativamente más tiempo -->
+Cada job corresponde a una acción del pipeline. El Job 0 es el más largo (6 s) porque materializa todo el pipeline de descarga, parseo y filtrado desde cero. Los jobs posteriores son mucho más rápidos porque operan sobre `filteredPosts` y `entitiesCounts`, que ya están cacheados en memoria.
+
+#### Stages completados y skipped
+
+Se completaron **9 stages** y se saltearon **4**:
+
+![Spark UI - Stages completados y skipped](images/stages.jpeg)
+
+| Stage | Descripción | Duración | Tareas | Shuffle Write |
+|-------|-------------|----------|--------|---------------|
+| 0 | `count` at Main.scala:72 | 5 s | 4/4 | — |
+| 1 | `sum` at Main.scala:79 | 0,1 s | 4/4 | — |
+| 2 | `map` at Main.scala:115 | 0,3 s | 4/4 | 2.2 KiB |
+| 3 | `sortBy` at Main.scala:122 | 0,2 s | 4/4 | 2.2 KiB |
+| 5 | `sortBy` at Main.scala:122 | 66 ms | 4/4 | 2.2 KiB |
+| 6 | `take` at Main.scala:123 | 43 ms | 1/1 | 637.0 B |
+| 9 | `take` at Main.scala:123 | 84 ms | 3/3 | 1566.0 B |
+| 11 | `map` at Main.scala:129 | 62 ms | 4/4 | 425.0 B |
+| 12 | `collect` at Main.scala:130 | 87 ms | 4/4 | — |
+
+Los **4 stages skipped** (IDs 4, 7, 8, 10) corresponden a recomputaciones que Spark evitó gracias a `.cache()`. Al tener `filteredPosts` y `entitiesCounts` persistidos en memoria, los jobs 3, 4 y 5 no necesitaron reejecutar los stages de descarga ni de reducción; Spark los marcó directamente como skipped y leyó desde caché.
+
+Los stages con **Shuffle Write** corresponden a las operaciones que redistribuyen datos entre particiones: el `reduceByKey` de conteo de entidades y el `sortBy` del ranking. Son las barreras de sincronización visibles del pipeline.
+
+#### Executors
+
+![Spark UI - Executors](images/driver.jpeg)
+
+La ejecución se realizó en **modo local** (`local[*]`), por lo que hubo un único executor que además actúa como driver:
+
+| Métrica | Valor |
+|---|---|
+| Executor activo | 1 (driver, `192.168.0.158`) |
+| Cores disponibles | 4 |
+| Tareas completadas | 32 |
+| Task time total | 56 s (GC: 0,1 s) |
+| Input leído | 207.9 KiB |
+| Shuffle Read | 4.7 KiB |
+| Shuffle Write | 4.7 KiB |
+
+Con 4 cores y 32 tareas totales, cada stage de 4 tareas se ejecutó completamente en paralelo dentro de la misma máquina.
+
+#### Event Timeline
+
+El timeline muestra los 6 jobs ejecutados en secuencia. El Job 0 (`count`) ocupa la mayor parte del tiempo total, desde las 22:37:44 hasta las 22:37:52 aproximadamente:
+
+![Spark UI - Event Timeline parte 1](images/event-time-line1.jpeg)
+
+Los jobs 1 (`sum`) y 2 (`sortBy`) se ejecutan a continuación, separados en el tiempo porque el driver necesita el resultado del `count` antes de poder calcular el promedio y luego lanzar el pipeline de NER:
+
+![Spark UI - Event Timeline parte 2](images/event-time-line2.jpeg)
+
+Finalmente los jobs 3, 4 (`take`) y 5 (`collect`) completan la ejecución, con duraciones muy cortas gracias al caché:
+
+![Spark UI - Event Timeline parte 3](images/event-time-line3.jpeg)
+
+Los 6 jobs se ejecutan en secuencia estricta: ningún job comenzó hasta que terminó el anterior. Esto es esperable porque el pipeline tiene dependencias de datos entre jobs — el Job 1 necesita el resultado del `count` del Job 0 para calcular el promedio; el Job 2 necesita `entitiesCounts` que a su vez depende de `filteredPosts`. La ejecución secuencial entre jobs no es un problema de paralelismo sino una consecuencia del modelo de control de flujo del driver.
+
+---
+
+### Preguntas conceptuales
+
+**¿Por qué los Accumulators solo deben usarse para métricas y no para tomar decisiones lógicas dentro de las etapas distribuidas del pipeline? ¿En qué situación puede dar un valor incorrecto?**
+
+Spark puede re-ejecutar una tarea ante un fallo o lanzar una tarea especulativa en otro worker para reducir el tiempo de espera. En ambos casos, la función del worker se ejecuta más de una vez sobre el mismo dato, y el Accumulator se incrementa múltiples veces para esa entrada. Durante la ejecución, el driver no puede distinguir si el valor actual refleja exactamente las entradas procesadas o incluye conteos duplicados por re-ejecuciones. Por eso, usar un Accumulator para tomar una decisión lógica dentro de un `flatMap` o `filter` produciría resultados incorrectos: la condición podría evaluarse sobre un valor inflado. En nuestro código, los Accumulators solo se leen en el driver después de una acción terminal, lo cual es el uso correcto.
+
+**¿En qué momento del pipeline está disponible el valor de un Accumulator para ser leído por el driver?**
+
+El valor de un Accumulator solo es confiable después de que una **acción terminal** (`count`, `collect`, `take`, `saveAsTextFile`, etc.) haya completado. Las transformaciones de Spark son lazy: hasta que no se ejecuta una acción, ningún worker ha corrido código y los Accumulators tienen valor cero. En nuestro pipeline, los Accumulators de feeds y posts se leen correctamente después de `filteredPosts.count()` en el stage 0, que es la primera acción y la que materializa el `flatMap` de descarga y el `filter`.
+
+**Comparativa de tiempos: versión secuencial vs. Spark**
+
+| Etapa | Secuencial (esqueleto) | Con Spark (local[*]) | Diferencia |
+|-------|----------------------|----------------------|------------|
+| Descarga + filtrado (`count`) | ~6 s | 6 s (Job 0) | Sin mejora apreciable |
+| Cómputo de largo promedio (`sum`) | < 0,1 s | 0,2 s | Spark es más lento |
+| NER + reducción (`sortBy`) | ~0,3 s | 0,6 s (Job 2) | Spark es más lento |
+| Ranking (`take` × 2) | < 0,1 s | 0,1 s + 0,1 s | Equivalente |
+| Conteo por tipo (`collect`) | < 0,1 s | 0,2 s | Spark es más lento |
+| **Total** | ~6,5 s | ~7,2 s | Spark ~10% más lento |
+
+Para el volumen de datos del laboratorio (pocos feeds, cientos de posts), **la versión con Spark no es más rápida que la secuencial**. La razón es que el overhead de Spark (inicialización del SparkContext, serialización de funciones y datos, scheduling de tareas, shuffle) supera el beneficio de la paralelización cuando el trabajo por tarea es pequeño. El cuello de botella real es la descarga HTTP, que en modo `local[*]` sí se paraleliza en 4 threads, pero con pocos feeds esa ganancia no compensa el overhead fijo. La ventaja de Spark se materializaría con cientos o miles de feeds, donde el trabajo distribuible domina sobre el overhead.
+
 
 ---
 
