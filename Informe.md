@@ -299,7 +299,7 @@ El valor de un Accumulator solo es confiable después de que una **acción termi
 | NER + reducción (`sortBy`) | 0.05 s | 0.55 s (Job 2) | Spark es más lento |
 
 
-Para el volumen de datos del laboratorio (pocos feeds, cientos de posts), **la versión con Spark no es más rápida que la secuencial**. La razón es que el overhead de Spark (inicialización del SparkContext, serialización de funciones y datos, scheduling de tareas, shuffle) supera el beneficio de la paralelización cuando el trabajo por tarea es pequeño. El cuello de botella real es la descarga HTTP, que en modo `local[*]` sí se paraleliza en 4 threads, pero con pocos feeds esa ganancia no compensa el overhead fijo. La ventaja de Spark se materializaría con cientos o miles de feeds, donde el trabajo distribuible domina sobre el overhead.
+Para el volumen de datos del laboratorio (pocos feeds, cientos de posts), **la versión con Spark es más rápida que la secuencial** en el caso de descarga más filtrado de post.En cambio para NER y la reducción final es más lento ya que el overhead de Spark (serialización de funciones y datos, scheduling de tareas, shuffle) supera el beneficio de la paralelización cuando el trabajo por tarea es pequeño. La ventaja de Spark se materializaría con cientos o miles de feeds, donde el trabajo distribuible domina sobre el overhead.
 
 
 ---
