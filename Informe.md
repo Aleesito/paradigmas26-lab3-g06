@@ -5,7 +5,7 @@
 **Integrantes:**
 - Lopez Benavides Francisco
 - Brizuela Franco
-- Prieto Ale
+- Prieto Gaikowsky Alé
 - Hernandez Juan Martin
 
 ---
@@ -31,7 +31,7 @@
 | 1 | Lectura de suscripciones | `String` (ruta archivo) | `List[Subscription]` |
 | 2 | Descarga de feeds | `Subscription` | `Iterator[Post]` |
 | 3 | Filtrado de posts vacíos | `RDD[Post]` | `RDD[Post]` |
-| 4 | Extracción de entidades nombradas | `Post` | `Iterator[NamedEntity]` |
+| 4 | Extracción de entidades nombradas | `RDD[Post]` | `Iterator[NamedEntity]` |
 | 5 | Conteo por entidad | `NamedEntity` | `((String, String), Int)` |
 | 6 | Reducción / agregación | `((String, String), Int)` | `((String, String), Int)` |
 | 7 | Ordenamiento y presentación | `RDD[((String, String), Int)]` | Salida por pantalla |
@@ -102,19 +102,23 @@ Al manejar el error internamente capturando la excepción el worker simplemente 
 
 > ¿Qué ocurre en el cluster en el punto de `reduceByKey`? ¿Por qué es inevitable para este problema?
 
-<!-- Completar: reduceByKey produce un shuffle: Spark redistribuye todos los pares (clave, valor) de forma que todos los pares con la misma clave queden en el mismo worker. Es inevitable porque para contar apariciones totales de una entidad es necesario combinar los conteos parciales de todos los workers que hayan encontrado esa entidad -->
+En este punto, al querer contar la cantidad de entidades detectadas, un **worker** pudo haber encontrado *"Juan"* y un **worker** distinto otro *"Juan"*, para que la suma de entidades sea la correcta y se detecten a todos los *"Juan"* de todos los **worker**, `reduceByKey` produce un **Shuffle**, esto hace que todos los **workers** se detengan un momento y se envíen los datos entre ellos para asegurarse de que todas las entidades con el mismo nombre se agrupen juntas en un mismo **worker** antes de hacer la suma final y enviar el resultado al driver. Este **Shuffle** es inevitable ya que para poder tener el conteo total de todas las entidades es necesario combinar los conteos parciales de todos los **workers** que hayan encontrado esa entidad.
 
 ### Restricciones de la función pasada a `reduceByKey`
 
 > ¿Qué restricciones debe cumplir la función que se le pasa a `reduceByKey`? Pensar en conmutatividad y asociatividad.
 
-<!-- Completar: la función debe ser (1) asociativa: f(f(a,b),c) == f(a,f(b,c)), para que Spark pueda combinar parcialmente resultados en cualquier orden; y (2) conmutativa: f(a,b) == f(b,a), para que el orden en que lleguen los valores no afecte el resultado. La suma de enteros cumple ambas propiedades -->
+La función debe ser asociativa, para que Spark pueda combinar parcialmente resultados en cualquier orden; y conmutativa, para que el orden en que lleguen los valores no afecte el resultado. La suma de enteros cumple ambas propiedades.
 
 ### ¿Dónde se lee el diccionario de entidades?
 
 > ¿La lectura del diccionario de entidades ocurre en el driver o en los workers?
 
-<!-- Completar: indicar dónde se carga el diccionario en la implementación actual y qué implicancias tiene. Si se carga dentro de un flatMap, se carga en cada worker (y posiblemente múltiples veces). Si se carga en el driver y se pasa como Broadcast variable, se serializa y envía una sola vez a cada worker -->
+En nuestra implementación, la lectura del diccionario desde el disco ocurre en el Driver, ya que la función `Dictionary.loadAll()` se invoca en el flujo principal del programa, fuera de cualquier transformación de Spark.
+
+Como la variable `dictionary` es referenciada posteriormente dentro de la función `flatMap`, Spark captura esta variable en la **clausura (closure)** de la función. Para que los workers puedan utilizarla, el Driver serializa la lista del diccionario y la envía a través de los hilos hacia la memoria de cada worker.
+
+Esta decisión de diseño evita que cada worker tenga que realizar operaciones lentas de I/O de forma redundante y concurrente, garantizando que ya tengan la estructura en memoria lista para procesar su partición de datos.
 
 ---
 
