@@ -12,7 +12,7 @@
 
 ## Decisiones de diseño relevantes
 
-<!-- Completar -->
+Una decisión de diseño sutil pero importante fue al modificar una función de `Analyzer.scala` para filtrar los posts correctamente, la función en el baseline tomaba como argumento un `List[Post]` y devolvía una lista filtrada `List[Post]`, esta función resultaba inútil para nuestra implementación con Spark al tener un `RDD[Post]`. Debido a esta limitiación decidimos modificar por completo la función dejando como signatura: `def isEmptyPost(post: Post): Boolean`, esto nos permitió filtrar de manera sencilla nustro `RDD[Post]` y mantener modularizada la lógica.
 
 ---
 
