@@ -119,15 +119,14 @@ Las funciones distribuidas no deben leer ni escribir estado mutable compartido e
 Las funciones pasadas a Spark deben ser lo más puras posible. Spark puede re-ejecutar una tarea ante un fallo o en modo especulativo, lo que significa que la misma función puede ejecutarse más de una vez sobre el mismo dato. Los `Console.err.println` dentro del `flatMap` de descarga son un ejemplo de efecto secundario tolerable (logging), pero si un efecto secundario fuera una escritura a una base de datos o un incremento de contador externo, podría ejecutarse múltiples veces y producir resultados incorrectos. Por la misma razón, los `Accumulator` pueden sobrecontar si una tarea se re-ejecuta, por eso no deben usarse para tomar decisiones lógicas del pipeline.
  
 
----
-
 ## Ejercicio 2 — Paralelizar la descarga de feeds
 
-### Manejo de errores dentro del flatMap
+### ¿Qué pasaría si se dejara propagar la excepción dentro del flatMap en lugar de manejarla internamente?
 
-> ¿Qué pasaría si se dejara propagar la excepción dentro del flatMap en lugar de manejarla internamente?
+Si una excepción se propaga fuera de la función pasada al flatMap, Spark marca la tarea como fallida y la reintenta. Si sigue fallando, cancela el stage completo y el job entero falla con una excepción. Esto significa que un solo feed inalcanzable haría fallar todo el programa, perdiendo el trabajo de todos los demás feeds ya descargados.
 
-<!-- Completar: si una excepción se propaga fuera de la función de un flatMap, Spark cancela la tarea completa. Dependiendo de la configuración de reintentos, puede reintentar la tarea o abortar el stage/job entero, lo que impediría procesar el resto de los feeds -->
+Al manejar el error internamente capturando la excepción el worker simplemente emite cero posts para ese feed y continúa con los demás. El pipeline sigue con los feeds que sí funcionaron.
+
 
 ---
 
@@ -137,19 +136,23 @@ Las funciones pasadas a Spark deben ser lo más puras posible. Spark puede re-ej
 
 > ¿Qué ocurre en el cluster en el punto de `reduceByKey`? ¿Por qué es inevitable para este problema?
 
-<!-- Completar: reduceByKey produce un shuffle: Spark redistribuye todos los pares (clave, valor) de forma que todos los pares con la misma clave queden en el mismo worker. Es inevitable porque para contar apariciones totales de una entidad es necesario combinar los conteos parciales de todos los workers que hayan encontrado esa entidad -->
+En este punto, al querer contar la cantidad de entidades detectadas, un **worker** pudo haber encontrado *"Juan"* y un **worker** distinto otro *"Juan"*, para que la suma de entidades sea la correcta y se detecten a todos los *"Juan"* de todos los **worker**, `reduceByKey` produce un **Shuffle**, esto hace que todos los **workers** se detengan un momento y se envíen los datos entre ellos para asegurarse de que todas las entidades con el mismo nombre se agrupen juntas en un mismo **worker** antes de hacer la suma final y enviar el resultado al driver. Este **Shuffle** es inevitable ya que para poder tener el conteo total de todas las entidades es necesario combinar los conteos parciales de todos los **workers** que hayan encontrado esa entidad.
 
 ### Restricciones de la función pasada a `reduceByKey`
 
 > ¿Qué restricciones debe cumplir la función que se le pasa a `reduceByKey`? Pensar en conmutatividad y asociatividad.
 
-<!-- Completar: la función debe ser (1) asociativa: f(f(a,b),c) == f(a,f(b,c)), para que Spark pueda combinar parcialmente resultados en cualquier orden; y (2) conmutativa: f(a,b) == f(b,a), para que el orden en que lleguen los valores no afecte el resultado. La suma de enteros cumple ambas propiedades -->
+La función debe ser asociativa, para que Spark pueda combinar parcialmente resultados en cualquier orden; y conmutativa, para que el orden en que lleguen los valores no afecte el resultado. La suma de enteros cumple ambas propiedades.
 
 ### ¿Dónde se lee el diccionario de entidades?
 
 > ¿La lectura del diccionario de entidades ocurre en el driver o en los workers?
 
-<!-- Completar: indicar dónde se carga el diccionario en la implementación actual y qué implicancias tiene. Si se carga dentro de un flatMap, se carga en cada worker (y posiblemente múltiples veces). Si se carga en el driver y se pasa como Broadcast variable, se serializa y envía una sola vez a cada worker -->
+En nuestra implementación, la lectura del diccionario desde el disco ocurre en el Driver, ya que la función `Dictionary.loadAll()` se invoca en el flujo principal del programa, fuera de cualquier transformación de Spark.
+
+Como la variable `dictionary` es referenciada posteriormente dentro de la función `flatMap`, Spark captura esta variable en la **clausura (closure)** de la función. Para que los workers puedan utilizarla, el Driver serializa la lista del diccionario y la envía a través de los hilos hacia la memoria de cada worker.
+
+Esta decisión de diseño evita que cada worker tenga que realizar operaciones lentas de I/O de forma redundante y concurrente, garantizando que ya tengan la estructura en memoria lista para procesar su partición de datos.
 
 ---
 
@@ -196,23 +199,26 @@ Las funciones pasadas a Spark deben ser lo más puras posible. Spark puede re-ej
 
 ## Ejercicio 5 — Acceso a datos y persistencia de RDDs
 
-### ¿Qué ocurriría sin `cache()`?
+### ¿Qué ocurriría sin `cache()`? ¿Cuántas veces se ejecutaría la descarga de feeds si no se llamara a `cache()`?
 
-> ¿Cuántas veces se ejecutaría la descarga de feeds si no se llamara a `cache()`?
+Sin `cache()`, cada acción sobre `filteredPosts` recomputaría todo el recorrido desde el principio: volvería a leer las suscripciones, descargar todos los feeds, parsear los posts y filtrar. En nuestro pipeline hay dos acciones sobre `filteredPosts` (count() y map(...).sum()), por lo que los feeds se descargarían dos veces. Con cache(), la primera acción materializa y almacena el RDD en memoria. La segunda acción lo reutiliza directamente sin recomputar.
 
-<!-- Completar: sin cache(), cada acción que dependa del RDD de posts recomputará el pipeline completo desde el principio, incluyendo las descargas HTTP. Si hay N acciones sobre el RDD de posts, los feeds se descargarían N veces -->
+### ¿Por qué es incorrecto llamar a collect() entre los pasos a) y b) del ejercicio 3 y continuar el pipeline? ¿Qué consecuencia tiene sobre la distribución del trabajo?
 
-### Por qué es incorrecto llamar a `collect()` entre los pasos del ejercicio 3
+Llamar a `collect()` trae todos los datos al driver y devuelve un Array. Si se continua el pipeline a partir de ese punto, se opera sobre una colección local en el driver, no sobre un RDD. Cualquier transformación posterior (map, reduceByKey, etc.) se ejecutaría secuencialmente en el driver, sin distribución. Se pierde completamente la paralelización, el mayor beneficio de usar Spark. 
 
-> ¿Por qué es incorrecto llamar a `collect()` entre los pasos a) y b) del ejercicio 3 y luego continuar el pipeline? ¿Qué consecuencia tiene sobre la distribución del trabajo?
 
-<!-- Completar: collect() trae todos los datos al driver, rompiendo la distribución. Si luego se continúa el pipeline desde el driver, el procesamiento subsiguiente es secuencial y ya no se beneficia de la paralelización de Spark. Además, si el volumen de datos es grande, puede causar un OutOfMemoryError en el driver -->
 
-### `cache()` es lazy: ¿cuándo se materializa el RDD?
+### `cache()` es lazy: ¿En qué momento se almacena realmente el RDD en memoria?
 
-> `cache()` es también lazy. ¿En qué momento se almacena realmente el RDD en memoria?
+Notamos que `cache()` solo marca el RDD como "persistir cuando se materialice". El almacenamiento real ocurre cuando la primera acción sobre ese RDD se ejecuta. En nuestro código:
 
-<!-- Completar: cache() solo marca el RDD para ser persistido; no dispara computación. El RDD se materializa y almacena en memoria la primera vez que se ejecuta una acción que lo requiere. Las acciones subsiguientes sobre ese RDD lo leen directamente de la caché -->
+```scala
+filteredPosts.cache()           // solo marca, no ejecuta nada
+...
+val postCount = filteredPosts.count()  // acá se materializa y se guarda en memoria
+```
+Las acciones subsiguientes sobre ese RDD leen directamente de la caché.
 
 ---
 
